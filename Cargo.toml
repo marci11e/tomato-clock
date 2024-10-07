@@ -1,0 +1,17 @@
+[package]
+name = "tomato-clock"
+version = "0.1.0"
+edition = "2021"
+# build = "build.rs"
+# 
+# [target.'cfg(windows)'.build-dependencies]
+# winres = "0.1.12"
+
+[dependencies]
+iced = { version = "0.13.1", default-features = false, features= ["fira-sans", "tiny-skia", "smol", "image"] }
+
+[profile.release]
+strip = true
+lto = true
+panic = "abort"
+opt-level = "z"
