@@ -5,6 +5,8 @@ use iced::{
     widget::{center, text, MouseArea},
     Element, Subscription, Task, Theme,
 };
+use iced_gif::widget::gif;
+use rust_embed::Embed;
 use std::time::{Duration, Instant};
 
 const TEXT_COLORS: [iced::Color; 4] = [
@@ -23,23 +25,43 @@ const BACKGROUND_COLORS: [iced::Color; 3] = [
     iced::Color::from_rgba(0f32, 0f32, 0f32, 0f32), // Transparent
 ];
 
+#[derive(Embed)]
+#[folder = "assets"]
+struct Asset;
+
 fn main() -> iced::Result {
-    iced::application("Tomato Clock", TomatoClock::update, TomatoClock::view)
-        .subscription(TomatoClock::subscription)
-        .theme(TomatoClock::theme)
-        .window(iced::window::Settings {
-            size: iced::Size::new(180f32, 60f32),
-            position: iced::window::Position::Centered,
-            resizable: false,
-            decorations: false,
-            transparent: true,
-            level: iced::window::Level::AlwaysOnTop,
-            icon: Some(iced::window::Icon::from(
-                iced::window::icon::from_file_data(include_bytes!("..\\tomato.ico"), None).unwrap(),
-            )),
-            ..Default::default()
-        })
-        .run_with(TomatoClock::new)
+    iced::daemon(AppDaemon::title, AppDaemon::update, AppDaemon::view)
+        .subscription(AppDaemon::subscription)
+        .theme(AppDaemon::theme)
+        .run_with(AppDaemon::new)
+}
+
+#[allow(dead_code)]
+enum Picture {
+    ImageHandle(iced::widget::image::Handle),
+    GifFrams(gif::Frames),
+}
+struct AppDaemon {
+    windows: (
+        (iced::window::Id, TomatoClock),
+        Option<(iced::window::Id, Reminder)>,
+    ),
+    is_picture_reminder: bool,
+    picture_data: Picture,
+}
+
+struct Reminder {
+    text: String,
+    color: iced::Color,
+}
+
+impl Default for Reminder {
+    fn default() -> Self {
+        Self {
+            text: ":) Time out!!!!!".to_string(),
+            color: iced::Color::from_rgba(0.8, 1.0, 0.0, 0.8),
+        }
+    }
 }
 
 struct TomatoClock {
@@ -48,7 +70,6 @@ struct TomatoClock {
     mode: Mode,
     pomodoro_duration: Duration,
     theme: CustomTheme,
-    window_id: Option<iced::window::Id>,
 }
 
 impl Default for TomatoClock {
@@ -59,7 +80,6 @@ impl Default for TomatoClock {
             mode: Mode::default(),
             pomodoro_duration: Duration::from_secs(25 * 60),
             theme: CustomTheme::default(),
-            window_id: None,
         }
     }
 }
@@ -123,20 +143,113 @@ enum Message {
     IncreasePomodoroDuration,
     DecreasePomodoroDuration,
     Shutdown,
-    GetWindowId(iced::window::Id),
     StartDragging,
     ChangeTextColor,
     ChangeBackgroundColor,
+    TimeOut,
+    CloseReminder,
+    TogglePictureReminder,
+}
+
+impl AppDaemon {
+    fn new() -> (Self, Task<Message>) {
+        let (id, open) = iced::window::open(iced::window::Settings {
+            size: iced::Size::new(150f32, 45f32),
+            position: iced::window::Position::Centered,
+            resizable: false,
+            decorations: false,
+            transparent: true,
+            level: iced::window::Level::AlwaysOnTop,
+            icon: Some(iced::window::Icon::from(
+                iced::window::icon::from_file_data(include_bytes!("..\\tomato.ico"), None).unwrap(),
+            )),
+            ..Default::default()
+        });
+        let picture = Asset::get("reminder.gif").unwrap().data.into_owned();
+        let gif_frames = gif::Frames::from_bytes(picture).unwrap();
+        (
+            Self {
+                windows: ((id, TomatoClock::default()), None),
+                is_picture_reminder: false,
+                picture_data: Picture::GifFrams(gif_frames),
+            },
+            open.then(|_| Task::none()),
+        )
+    }
+    fn title(&self, window: iced::window::Id) -> String {
+        if self.windows.0 .0 == window {
+            "Tomato Clock".to_string()
+        } else {
+            "Time out".to_string()
+        }
+    }
+
+    fn view(&self, window: iced::window::Id) -> Element<Message> {
+        if self.windows.0 .0 == window {
+            self.windows.0 .1.view()
+        } else {
+            if let Some((_, reminder)) = &self.windows.1 {
+                reminder.view(if self.is_picture_reminder {
+                    Some(&self.picture_data)
+                } else {
+                    None
+                })
+            } else {
+                iced::widget::horizontal_space().into()
+            }
+        }
+    }
+
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::TimeOut => {
+                let (id, open) = iced::window::open(iced::window::Settings {
+                    position: iced::window::Position::Centered,
+                    resizable: false,
+                    decorations: false,
+                    transparent: true,
+                    level: iced::window::Level::AlwaysOnTop,
+                    ..Default::default()
+                });
+                self.windows.1 = Some((id, Reminder::new()));
+                return open.then(|id| iced::window::maximize(id, true));
+            }
+            Message::StartDragging => {
+                return iced::window::drag(self.windows.0 .0);
+            }
+            Message::CloseReminder => {
+                if let Some((id, _)) = self.windows.1 {
+                    self.windows.1 = None;
+                    return iced::window::close(id);
+                }
+            }
+            Message::TogglePictureReminder => {
+                self.is_picture_reminder = !self.is_picture_reminder;
+            }
+            _ => return self.windows.0 .1.update(message),
+        }
+        Task::none()
+    }
+
+    fn theme(&self, window: iced::window::Id) -> Theme {
+        if self.windows.0 .0 == window {
+            self.windows.0 .1.theme()
+        } else {
+            Theme::custom(
+                "reminder".to_string(),
+                iced::theme::Palette {
+                    background: BACKGROUND_COLORS[2],
+                    ..Theme::default().palette()
+                },
+            )
+        }
+    }
+    fn subscription(&self) -> Subscription<Message> {
+        self.windows.0 .1.subscription()
+    }
 }
 
 impl TomatoClock {
-    fn new() -> (Self, Task<Message>) {
-        (
-            Self::default(),
-            iced::window::get_oldest().and_then(|id| Task::done(Message::GetWindowId(id))),
-        )
-    }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Toggle => match self.state {
@@ -171,6 +284,7 @@ impl TomatoClock {
                         } else {
                             self.duration = self.pomodoro_duration;
                             self.state = State::Idle;
+                            return Task::done(Message::TimeOut);
                         }
                     } else {
                         self.duration += now - *last_tick;
@@ -235,25 +349,15 @@ impl TomatoClock {
                     )
                 }
             }
-            Message::GetWindowId(id) => {
-                self.window_id = Some(id);
-            }
-            Message::StartDragging => {
-                if let Some(id) = self.window_id {
-                    return iced::window::drag(id);
-                } else {
-                    return iced::window::get_oldest()
-                        .and_then(|id| Task::done(Message::GetWindowId(id)));
-                }
-            }
             Message::Shutdown => return iced::exit(),
+            _ => {}
         }
         Task::none()
     }
     fn subscription(&self) -> Subscription<Message> {
         let tick = match self.state {
             State::Idle => Subscription::none(),
-            State::Ticking { .. } => time::every(Duration::from_millis(1000)).map(Message::Tick), // equal to |_|Message::Tick
+            State::Ticking { .. } => time::every(Duration::from_millis(1000)).map(Message::Tick), // equal to |instant| Message::Tick(instant),
         };
         fn handle_hotkey(key: keyboard::Key, _modifiers: keyboard::Modifiers) -> Option<Message> {
             match key.as_ref() {
@@ -265,6 +369,7 @@ impl TomatoClock {
                 keyboard::Key::Character("]") => Some(Message::IncreasePomodoroDuration),
                 keyboard::Key::Character("t") => Some(Message::ChangeTextColor),
                 keyboard::Key::Character("b") => Some(Message::ChangeBackgroundColor),
+                keyboard::Key::Character("p") => Some(Message::TogglePictureReminder),
                 _ => None,
             }
         }
@@ -286,9 +391,14 @@ impl TomatoClock {
         } else {
             TEXT_COLORS[self.theme.run_text_color_index]
         })
-        .size(40);
+        .size(40)
+        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+            40f32,
+        )));
+
         MouseArea::new(center(duration))
             .on_press(Message::StartDragging)
+            // .on_right_press(Message::TimeOut)
             .into()
     }
     fn theme(&self) -> Theme {
@@ -296,6 +406,34 @@ impl TomatoClock {
             self.theme.stop.clone()
         } else {
             self.theme.run.clone()
+        }
+    }
+}
+
+impl Reminder {
+    fn new() -> Self {
+        Reminder::default()
+    }
+
+    fn view<'a>(&'a self, picture: Option<&'a Picture>) -> Element<Message> {
+        match picture {
+            Some(Picture::ImageHandle(handle)) => {
+                let picture = iced::widget::image(handle);
+                MouseArea::new(center(picture.width(400)))
+                    .on_press(Message::CloseReminder)
+                    .into()
+            }
+            Some(Picture::GifFrams(frames)) => {
+                let picture: gif::Gif<'a> = gif(frames).width(iced::Length::from(400));
+                MouseArea::new(center(picture))
+                    .on_press(Message::CloseReminder)
+                    .into()
+            }
+            None => MouseArea::new(center(
+                text(&self.text).color(self.color).size(180).center(),
+            ))
+            .on_press(Message::CloseReminder)
+            .into(),
         }
     }
 }
