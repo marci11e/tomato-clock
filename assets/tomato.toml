@@ -1,8 +1,8 @@
-position = [0,0]
-stop_text_color_index = 1 # 必填
-stop_background_color_index = 1 # 必填
-run_text_color_index = 3 # 必填
-run_background_color_index = 2 # 必填
+position = [0,0] # if not specified, the tomato-clock will be centered on the screen.
+stop_text_color_index = 1 # required
+stop_background_color_index = 1 # required
+run_text_color_index = 3 # required
+run_background_color_index = 2 # required
 
 [[text_colors]]
 # black
@@ -57,7 +57,7 @@ a = 0
 text = ":) Time out!!!!!"
 color = {r=1, g=1.0, b=0.0, a=0.8}
 font_size = 180
- # 存在image_path时，将显示图片
-image_path = "assets/reminder.gif"
+ # If 'image_path' field exists, the reminder will display the image.
+image_path = "reminder.gif"
 width = 400
 height = 400
