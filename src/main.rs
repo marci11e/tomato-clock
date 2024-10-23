@@ -6,28 +6,14 @@ use iced::{
     Element, Subscription, Task, Theme,
 };
 use iced_gif::widget::gif;
-use rust_embed::Embed;
-use std::time::{Duration, Instant};
+use serde::{Deserialize, Serialize};
+use std::{
+    time::{Duration, Instant},
+    vec::Vec,
+};
+use toml;
 
-const TEXT_COLORS: [iced::Color; 4] = [
-    iced::Color::BLACK,                   // Dark
-    iced::Color::WHITE,                   // White
-    iced::Color::from_rgb(0.8, 0.9, 0.6), // Yellow
-    iced::Color::from_rgb(0.2, 0.8, 0.2), // Green
-];
-const BACKGROUND_COLORS: [iced::Color; 3] = [
-    iced::Color::from_rgb(
-        0x20 as f32 / 255.0,
-        0x22 as f32 / 255.0,
-        0x25 as f32 / 255.0,
-    ), // Dark
-    iced::Color::from_rgb(0.9, 0.9, 0.9),           // Light
-    iced::Color::from_rgba(0f32, 0f32, 0f32, 0f32), // Transparent
-];
-
-#[derive(Embed)]
-#[folder = "assets"]
-struct Asset;
+const CONFIG_PATH: &str = "tomato.toml";
 
 fn main() -> iced::Result {
     iced::daemon(AppDaemon::title, AppDaemon::update, AppDaemon::view)
@@ -36,23 +22,95 @@ fn main() -> iced::Result {
         .run_with(AppDaemon::new)
 }
 
-#[allow(dead_code)]
-enum Picture {
-    ImageHandle(iced::widget::image::Handle),
-    GifFrams(gif::Frames),
+#[derive(Deserialize, Serialize, Clone, Copy, Debug)]
+struct Color {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
 }
+
+impl From<Color> for iced::Color {
+    fn from(c: Color) -> Self {
+        iced::Color::from_rgba(c.r, c.g, c.b, c.a)
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct ReminderConfig {
+    text: Option<String>,
+    color: Option<Color>,
+    font_size: Option<u16>,
+    image_path: Option<String>,
+    width: Option<u16>,
+    height: Option<u16>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct TomatoConfig {
+    position: Option<[f32; 2]>,
+    stop_text_color_index: usize,
+    run_text_color_index: usize,
+    stop_background_color_index: usize,
+    run_background_color_index: usize,
+    text_colors: Vec<Color>,
+    background_colors: Vec<Color>,
+    reminder: ReminderConfig,
+}
+
+impl Default for TomatoConfig {
+    fn default() -> Self {
+        Self {
+            position: None,
+            stop_text_color_index: 0,
+            run_text_color_index: 0,
+            stop_background_color_index: 0,
+            run_background_color_index: 0,
+            text_colors: vec![Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }],
+            background_colors: vec![Color {
+                r: 0.9,
+                g: 0.9,
+                b: 0.9,
+                a: 1.0,
+            }],
+            reminder: ReminderConfig {
+                text: None,
+                color: None,
+                font_size: None,
+                image_path: None,
+                width: None,
+                height: None,
+            },
+        }
+    }
+}
+
 struct AppDaemon {
     windows: (
         (iced::window::Id, TomatoClock),
         Option<(iced::window::Id, Reminder)>,
     ),
-    is_picture_reminder: bool,
-    picture_data: Picture,
+    picture_data: Option<Picture>,
+    exist_entity: bool,
+    tomato_config: TomatoConfig,
+}
+
+enum Picture {
+    ImageHandle(iced::widget::image::Handle),
+    GifFrams(gif::Frames),
 }
 
 struct Reminder {
     text: String,
     color: iced::Color,
+    font_size: u16,
+    width: Option<u16>,
+    height: Option<u16>,
 }
 
 impl Default for Reminder {
@@ -60,6 +118,9 @@ impl Default for Reminder {
         Self {
             text: ":) Time out!!!!!".to_string(),
             color: iced::Color::from_rgba(0.8, 1.0, 0.0, 0.8),
+            font_size: 180,
+            width: None,
+            height: None,
         }
     }
 }
@@ -69,53 +130,10 @@ struct TomatoClock {
     state: State,
     mode: Mode,
     pomodoro_duration: Duration,
-    theme: CustomTheme,
-}
-
-impl Default for TomatoClock {
-    fn default() -> Self {
-        Self {
-            duration: Duration::from_secs(25 * 60),
-            state: State::default(),
-            mode: Mode::default(),
-            pomodoro_duration: Duration::from_secs(25 * 60),
-            theme: CustomTheme::default(),
-        }
-    }
-}
-
-struct CustomTheme {
-    stop: Theme,
-    run: Theme,
-    stop_text_color_index: usize,
-    stop_background_color_index: usize,
-    run_text_color_index: usize,
-    run_background_color_index: usize,
-}
-
-impl Default for CustomTheme {
-    fn default() -> Self {
-        Self {
-            stop: Theme::custom(
-                "stop".to_string(),
-                iced::theme::Palette {
-                    background: BACKGROUND_COLORS[0],
-                    ..Theme::default().palette()
-                },
-            ),
-            run: Theme::custom(
-                "run".to_string(),
-                iced::theme::Palette {
-                    background: BACKGROUND_COLORS[2],
-                    ..Theme::default().palette()
-                },
-            ),
-            stop_background_color_index: 0,
-            stop_text_color_index: 1,
-            run_background_color_index: 2,
-            run_text_color_index: 2,
-        }
-    }
+    run_background_color: iced::Color,
+    stop_background_color: iced::Color,
+    run_text_color: iced::Color,
+    stop_text_color: iced::Color,
 }
 
 #[derive(Default)]
@@ -148,14 +166,47 @@ enum Message {
     ChangeBackgroundColor,
     TimeOut,
     CloseReminder,
-    TogglePictureReminder,
+    EarlyTermination,
 }
 
 impl AppDaemon {
     fn new() -> (Self, Task<Message>) {
+        let (mut tomato_config, exist_entity) =
+            if let Ok(toml_str) = std::fs::read_to_string(CONFIG_PATH) {
+                (
+                    toml::from_str(&toml_str).expect("Failed to parse config file"),
+                    true,
+                )
+            } else {
+                (TomatoConfig::default(), false)
+            };
+        // println!("Tomato config: {:#?}", tomato_config);
+        let picture_data = if let Some(path) = &tomato_config.reminder.image_path {
+            if matches!(
+                std::path::Path::new(path)
+                    .extension()
+                    .map(|ext| ext.to_str()),
+                Some(Some("gif"))
+            ) {
+                Some(Picture::GifFrams(
+                    gif::Frames::from_bytes(
+                        std::fs::read(path).expect("Failed to read image file"),
+                    )
+                    .expect("Failed to decode gif file"),
+                ))
+            } else {
+                Some(Picture::ImageHandle(path.into()))
+            }
+        } else {
+            None
+        };
         let (id, open) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(150f32, 45f32),
-            position: iced::window::Position::Centered,
+            position: if let Some(position) = tomato_config.position {
+                iced::window::Position::Specific(iced::Point::new(position[0], position[1]))
+            } else {
+                iced::window::Position::Centered
+            },
             resizable: false,
             decorations: false,
             transparent: true,
@@ -165,13 +216,52 @@ impl AppDaemon {
             )),
             ..Default::default()
         });
-        let picture = Asset::get("reminder.gif").unwrap().data.into_owned();
-        let gif_frames = gif::Frames::from_bytes(picture).unwrap();
+        tomato_config.run_background_color_index =
+            if tomato_config.run_background_color_index < tomato_config.background_colors.len() {
+                tomato_config.run_background_color_index
+            } else {
+                tomato_config.background_colors.len() - 1
+            };
+        tomato_config.stop_background_color_index =
+            if tomato_config.stop_background_color_index < tomato_config.background_colors.len() {
+                tomato_config.stop_background_color_index
+            } else {
+                tomato_config.background_colors.len() - 1
+            };
+        tomato_config.run_text_color_index =
+            if tomato_config.run_text_color_index < tomato_config.text_colors.len() {
+                tomato_config.run_text_color_index
+            } else {
+                tomato_config.text_colors.len() - 1
+            };
+        tomato_config.stop_text_color_index =
+            if tomato_config.stop_text_color_index < tomato_config.text_colors.len() {
+                tomato_config.stop_text_color_index
+            } else {
+                tomato_config.text_colors.len() - 1
+            };
+
         (
             Self {
-                windows: ((id, TomatoClock::default()), None),
-                is_picture_reminder: false,
-                picture_data: Picture::GifFrams(gif_frames),
+                windows: (
+                    (
+                        id,
+                        TomatoClock::new(
+                            tomato_config.background_colors
+                                [tomato_config.run_background_color_index]
+                                .into(),
+                            tomato_config.background_colors
+                                [tomato_config.stop_background_color_index]
+                                .into(),
+                            tomato_config.text_colors[tomato_config.run_text_color_index].into(),
+                            tomato_config.text_colors[tomato_config.stop_text_color_index].into(),
+                        ),
+                    ),
+                    None,
+                ),
+                picture_data,
+                exist_entity,
+                tomato_config,
             },
             open.then(|_| Task::none()),
         )
@@ -189,11 +279,7 @@ impl AppDaemon {
             self.windows.0 .1.view()
         } else {
             if let Some((_, reminder)) = &self.windows.1 {
-                reminder.view(if self.is_picture_reminder {
-                    Some(&self.picture_data)
-                } else {
-                    None
-                })
+                reminder.view(self.picture_data.as_ref())
             } else {
                 iced::widget::horizontal_space().into()
             }
@@ -211,7 +297,16 @@ impl AppDaemon {
                     level: iced::window::Level::AlwaysOnTop,
                     ..Default::default()
                 });
-                self.windows.1 = Some((id, Reminder::new()));
+                let ReminderConfig {
+                    text,
+                    color,
+                    font_size,
+                    width,
+                    height,
+                    ..
+                } = &self.tomato_config.reminder;
+                let reminder = Reminder::new(text, color, font_size, width, height);
+                self.windows.1 = Some((id, reminder));
                 return open.then(|id| iced::window::maximize(id, true));
             }
             Message::StartDragging => {
@@ -223,8 +318,53 @@ impl AppDaemon {
                     return iced::window::close(id);
                 }
             }
-            Message::TogglePictureReminder => {
-                self.is_picture_reminder = !self.is_picture_reminder;
+            Message::ChangeTextColor => {
+                if let State::Idle = self.windows.0 .1.state {
+                    self.tomato_config.stop_text_color_index =
+                        (self.tomato_config.stop_text_color_index + 1)
+                            % self.tomato_config.text_colors.len();
+                    self.windows.0 .1.stop_text_color = self.tomato_config.text_colors
+                        [self.tomato_config.stop_text_color_index]
+                        .into();
+                } else {
+                    self.tomato_config.run_text_color_index =
+                        (self.tomato_config.run_text_color_index + 1)
+                            % self.tomato_config.text_colors.len();
+                    self.windows.0 .1.run_text_color = self.tomato_config.text_colors
+                        [self.tomato_config.run_text_color_index]
+                        .into();
+                }
+            }
+            Message::ChangeBackgroundColor => {
+                if let State::Idle = self.windows.0 .1.state {
+                    self.tomato_config.stop_background_color_index =
+                        (self.tomato_config.stop_background_color_index + 1)
+                            % self.tomato_config.background_colors.len();
+                    self.windows.0 .1.stop_background_color = self.tomato_config.background_colors
+                        [self.tomato_config.stop_background_color_index]
+                        .into();
+                } else {
+                    self.tomato_config.run_background_color_index =
+                        (self.tomato_config.run_background_color_index + 1)
+                            % self.tomato_config.background_colors.len();
+                    self.windows.0 .1.run_background_color = self.tomato_config.background_colors
+                        [self.tomato_config.run_background_color_index]
+                        .into();
+                }
+            }
+            Message::Shutdown => {
+                if self.exist_entity {
+                    let mut tomato_config = self.tomato_config.clone();
+                    return iced::window::get_position(self.windows.0 .0).then(move |pos| {
+                        if let Some(iced::Point { x, y }) = pos {
+                            tomato_config.position = Some([x, y]);
+                        }
+                        std::fs::write(CONFIG_PATH, toml::to_string(&tomato_config).unwrap())
+                            .expect("Failed to write config file");
+                        iced::exit()
+                    });
+                };
+                return iced::exit();
             }
             _ => return self.windows.0 .1.update(message),
         }
@@ -238,7 +378,7 @@ impl AppDaemon {
             Theme::custom(
                 "reminder".to_string(),
                 iced::theme::Palette {
-                    background: BACKGROUND_COLORS[2],
+                    background: iced::Color::TRANSPARENT,
                     ..Theme::default().palette()
                 },
             )
@@ -250,6 +390,24 @@ impl AppDaemon {
 }
 
 impl TomatoClock {
+    fn new(
+        run_background_color: iced::Color,
+        stop_background_color: iced::Color,
+        run_text_color: iced::Color,
+        stop_text_color: iced::Color,
+    ) -> Self {
+        Self {
+            duration: Duration::from_secs(25 * 60),
+            state: State::default(),
+            mode: Mode::default(),
+            pomodoro_duration: Duration::from_secs(25 * 60),
+            run_background_color,
+            run_text_color,
+            stop_background_color,
+            stop_text_color,
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Toggle => match self.state {
@@ -292,6 +450,13 @@ impl TomatoClock {
                     }
                 };
             }
+            Message::EarlyTermination => {
+                if let Mode::Pomodoro = &self.mode {
+                    self.duration = self.pomodoro_duration;
+                    self.state = State::Idle;
+                    return Task::done(Message::TimeOut);
+                }
+            }
             Message::Reset => {
                 match self.mode {
                     Mode::Pomodoro => self.duration = self.pomodoro_duration,
@@ -317,39 +482,6 @@ impl TomatoClock {
                     self.duration = self.pomodoro_duration;
                 }
             }
-            Message::ChangeTextColor => {
-                if matches!(self.state, State::Idle) {
-                    self.theme.stop_text_color_index =
-                        (self.theme.stop_text_color_index + 1) % TEXT_COLORS.len();
-                } else {
-                    self.theme.run_text_color_index =
-                        (self.theme.run_text_color_index + 1) % TEXT_COLORS.len();
-                }
-            }
-            Message::ChangeBackgroundColor => {
-                if matches!(self.state, State::Idle) {
-                    self.theme.stop_background_color_index =
-                        (self.theme.stop_background_color_index + 1) % BACKGROUND_COLORS.len();
-                    self.theme.stop = Theme::custom(
-                        "stop".to_string(),
-                        iced::theme::Palette {
-                            background: BACKGROUND_COLORS[self.theme.stop_background_color_index],
-                            ..self.theme.stop.palette()
-                        },
-                    )
-                } else {
-                    self.theme.run_background_color_index =
-                        (self.theme.run_background_color_index + 1) % BACKGROUND_COLORS.len();
-                    self.theme.run = Theme::custom(
-                        "run".to_string(),
-                        iced::theme::Palette {
-                            background: BACKGROUND_COLORS[self.theme.run_background_color_index],
-                            ..self.theme.run.palette()
-                        },
-                    )
-                }
-            }
-            Message::Shutdown => return iced::exit(),
             _ => {}
         }
         Task::none()
@@ -369,7 +501,6 @@ impl TomatoClock {
                 keyboard::Key::Character("]") => Some(Message::IncreasePomodoroDuration),
                 keyboard::Key::Character("t") => Some(Message::ChangeTextColor),
                 keyboard::Key::Character("b") => Some(Message::ChangeBackgroundColor),
-                keyboard::Key::Character("p") => Some(Message::TogglePictureReminder),
                 _ => None,
             }
         }
@@ -387,9 +518,9 @@ impl TomatoClock {
             seconds % MINUTE,
         )
         .color(if matches!(self.state, State::Idle) {
-            TEXT_COLORS[self.theme.stop_text_color_index]
+            self.stop_text_color
         } else {
-            TEXT_COLORS[self.theme.run_text_color_index]
+            self.run_text_color
         })
         .size(40)
         .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
@@ -398,42 +529,94 @@ impl TomatoClock {
 
         MouseArea::new(center(duration))
             .on_press(Message::StartDragging)
-            // .on_right_press(Message::TimeOut)
+            .on_right_press(Message::EarlyTermination)
             .into()
     }
     fn theme(&self) -> Theme {
         if let State::Idle = self.state {
-            self.theme.stop.clone()
+            Theme::custom(
+                "stop".to_string(),
+                iced::theme::Palette {
+                    background: self.stop_background_color.into(),
+                    ..Theme::default().palette()
+                },
+            )
         } else {
-            self.theme.run.clone()
+            Theme::custom(
+                "run".to_string(),
+                iced::theme::Palette {
+                    background: self.run_background_color.into(),
+                    ..Theme::default().palette()
+                },
+            )
         }
     }
 }
 
 impl Reminder {
-    fn new() -> Self {
-        Reminder::default()
+    fn new(
+        text: &Option<String>,
+        color: &Option<Color>,
+        font_size: &Option<u16>,
+        width: &Option<u16>,
+        height: &Option<u16>,
+    ) -> Self {
+        let mut reminder = Reminder::default();
+        if let Some(text) = text {
+            reminder.text = text.clone();
+        }
+        if let Some(color) = color {
+            reminder.color = color.clone().into();
+        }
+        if let Some(font_size) = font_size {
+            reminder.font_size = font_size.clone();
+        }
+        reminder.width = *width;
+        reminder.height = *height;
+        reminder
     }
 
     fn view<'a>(&'a self, picture: Option<&'a Picture>) -> Element<Message> {
         match picture {
             Some(Picture::ImageHandle(handle)) => {
-                let picture = iced::widget::image(handle);
-                MouseArea::new(center(picture.width(400)))
-                    .on_press(Message::CloseReminder)
-                    .into()
-            }
-            Some(Picture::GifFrams(frames)) => {
-                let picture: gif::Gif<'a> = gif(frames).width(iced::Length::from(400));
+                let mut picture = iced::widget::image(handle);
+                if let Some(width) = self.width {
+                    picture = picture.width(width)
+                }
+                if let Some(height) = self.height {
+                    picture = picture.height(height)
+                }
                 MouseArea::new(center(picture))
                     .on_press(Message::CloseReminder)
                     .into()
             }
-            None => MouseArea::new(center(
-                text(&self.text).color(self.color).size(180).center(),
-            ))
-            .on_press(Message::CloseReminder)
-            .into(),
+            Some(Picture::GifFrams(frames)) => {
+                let mut picture: gif::Gif<'a> = gif(frames);
+                if let Some(width) = self.width {
+                    picture = picture.width(iced::Length::from(width))
+                }
+                if let Some(height) = self.height {
+                    picture = picture.height(iced::Length::from(height))
+                }
+                MouseArea::new(center(picture))
+                    .on_press(Message::CloseReminder)
+                    .into()
+            }
+            None => {
+                let mut _text = text(&self.text)
+                    .color(self.color)
+                    .size(self.font_size)
+                    .center();
+                if let Some(width) = self.width {
+                    _text = _text.width(width)
+                }
+                if let Some(height) = self.height {
+                    _text = _text.height(height)
+                }
+                MouseArea::new(center(_text))
+                    .on_press(Message::CloseReminder)
+                    .into()
+            }
         }
     }
 }

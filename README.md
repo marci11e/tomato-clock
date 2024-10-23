@@ -14,4 +14,3 @@ The gui is powered by [iced](https://github.com/iced-rs/iced).
 - `t` switch text color
 - `b` switch background color
 - `esc` exit the program
-- `p` Switch to text or images on the reminder view
