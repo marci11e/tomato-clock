@@ -202,10 +202,23 @@ impl AppDaemon {
         };
         let (id, open) = iced::window::open(iced::window::Settings {
             size: iced::Size::new(150f32, 45f32),
-            position: if let Some(position) = tomato_config.position {
-                iced::window::Position::Specific(iced::Point::new(position[0], position[1]))
-            } else {
-                iced::window::Position::Centered
+            position: match (tomato_config.position, display_info::DisplayInfo::all()) {
+                (Some(position), Ok(display_info_list)) if !display_info_list.is_empty() => {
+                    let (x, y) = if position[0] < 0.0
+                        || position[0] > 1.0
+                        || position[1] < 0.0
+                        || position[1] > 1.0
+                    {
+                        (0.5, 0.5)
+                    } else {
+                        (position[0], position[1])
+                    };
+                    iced::window::Position::Specific(iced::Point::new(
+                        x * display_info_list[0].width as f32,
+                        y * display_info_list[0].height as f32,
+                    ))
+                }
+                _ => iced::window::Position::Centered,
             },
             resizable: false,
             decorations: false,
@@ -357,7 +370,14 @@ impl AppDaemon {
                     let mut tomato_config = self.tomato_config.clone();
                     return iced::window::get_position(self.windows.0 .0).then(move |pos| {
                         if let Some(iced::Point { x, y }) = pos {
-                            tomato_config.position = Some([x, y]);
+                            if let Ok(display_info) =
+                                display_info::DisplayInfo::from_point(x as i32, y as i32)
+                            {
+                                tomato_config.position = Some([
+                                    x / display_info.width as f32,
+                                    y / display_info.height as f32,
+                                ]);
+                            }
                         }
                         std::fs::write(CONFIG_PATH, toml::to_string(&tomato_config).unwrap())
                             .expect("Failed to write config file");

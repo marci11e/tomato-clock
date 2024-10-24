@@ -1,4 +1,4 @@
-position = [0,0] # if not specified, the tomato-clock will be centered on the screen.
+position = [0.0,0.0] # if not specified, the tomato-clock will be centered on the screen. Between 0 and 1.
 stop_text_color_index = 1 # required
 stop_background_color_index = 1 # required
 run_text_color_index = 3 # required

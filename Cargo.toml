@@ -8,6 +8,7 @@ build = "build.rs"
 winres = "0.1.12"
 
 [dependencies]
+display-info = "0.5.1"
 iced = { version = "0.13.1", default-features = false, features= ["tiny-skia", "smol", "image", "multi-window"] }
 iced_gif = "0.13.0"
 # rust-embed={version = "8.4.0", features = ["compression", "debug-embed"]}
